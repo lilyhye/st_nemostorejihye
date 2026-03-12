@@ -17,14 +17,32 @@ st.set_page_config(
 # 1. 데이터 로드 및 전처리 함수
 @st.cache_data
 def load_data():
-    DB_PATH = 'nemostore/data/nemo_items.db'
-    if not os.path.exists(DB_PATH):
-        st.error(f"데이터베이스 파일을 찾을 수 없습니다: {DB_PATH}")
+    # 배포 환경과 로컬 환경을 모두 고려한 경로 설정
+    possible_paths = [
+        'nemostore/data/nemo_items.db',
+        '../data/nemo_items.db',
+        'data/nemo_items.db'
+    ]
+    
+    db_path = None
+    for p in possible_paths:
+        if os.path.exists(p):
+            db_path = p
+            break
+            
+    if not db_path:
+        st.error("❌ 데이터베이스 파일을 찾을 수 없습니다. GitHub 저장소에 `nemostore/data/nemo_items.db` 파일이 포함되어 있는지 확인해주세요.")
+        # 현재 작업 디렉토리 출력을 통해 디버깅 지원
+        st.info(f"현재 작업 디렉토리: {os.getcwd()}")
         return pd.DataFrame()
     
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql('SELECT * FROM nemo_stores', conn)
-    conn.close()
+    try:
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql('SELECT * FROM nemo_stores', conn)
+        conn.close()
+    except Exception as e:
+        st.error(f"❌ 데이터 로드 중 오류 발생: {e}")
+        return pd.DataFrame()
     
     # 수치형 변환
     numeric_cols = ['deposit', 'monthlyRent', 'premium', 'sale', 'size', 'floor']
@@ -86,6 +104,18 @@ st.markdown("""
 
 # 2. 사이드바 검색 및 필터
 st.sidebar.title("🔍 검색 및 필터")
+
+if df.empty:
+    st.warning("⚠️ 데이터를 불러오지 못했습니다. 데이터베이스 파일을 확인해주세요.")
+    st.stop()
+
+# 필수 컬럼 존재 여부 확인
+required_cols = ['title', 'businessMiddleCodeName', 'monthlyRent', 'deposit', 'premium']
+missing_cols = [col for col in required_cols if col not in df.columns]
+if missing_cols:
+    st.error(f"❌ 필수 컬럼이 누락되었습니다: {', '.join(missing_cols)}")
+    st.stop()
+
 search_query = st.sidebar.text_input("매물 제목 검색", "")
 all_biz = sorted(df['businessMiddleCodeName'].unique())
 selected_biz = st.sidebar.multiselect("업종 선택", all_biz, default=all_biz)
@@ -93,6 +123,9 @@ selected_biz = st.sidebar.multiselect("업종 선택", all_biz, default=all_biz)
 st.sidebar.subheader("💰 가격 범위 (만원)")
 def sidebar_slider(label, col):
     m_min, m_max = int(df[col].min()), int(df[col].max())
+    # min과 max가 같을 경우 처리
+    if m_min == m_max:
+        return (m_min, m_max)
     return st.sidebar.slider(label, m_min, m_max, (m_min, m_max))
 
 rent_range = sidebar_slider("월세", "monthlyRent")
